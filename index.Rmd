@@ -6,7 +6,7 @@ output:
 runtime: shiny
 ---
 
-```{r setup, include=FALSE}
+```{r global, include=FALSE}
 library(flexdashboard)
 library(shiny)
 library(sf)
@@ -31,7 +31,7 @@ drp_boot <- function(hh, by.station, y = b, S = input$survey, L = input$latin) {
     filter(survey %in% S) |>
     left_join(by.station |> filter(latin == L),
               by = join_by(.id)) |>
-    collect() |>
+    # collect() |>
     mutate(n = replace_na(n, 0),
            b = replace_na(b, 0)) |>
     ggplot(aes(year, {{ y }})) +
@@ -51,14 +51,16 @@ drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin,
     bb |> 
     filter(survey == S)
 
-  maxyear <- hh2 |> collect() |> pull(year) |> max(na.rm = TRUE)
+  maxyear <- hh2 |> 
+    #collect() |> 
+    pull(year) |> max(na.rm = TRUE)
   
   hh2 <-
     hh2 |>
     filter(year == maxyear) |>
     left_join(by.station |> filter(latin == L),
               by = join_by(.id)) |>
-    collect() |>
+    #collect() |>
     mutate(zero = ifelse(is.na(n), "yes", "no"),
            n = replace_na(n, 0),
            b = replace_na(b, 0))
@@ -76,9 +78,10 @@ drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin,
     facet_wrap(~ year)
 }
 
-hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet")
-by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet")
-by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet")
+hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet") |> collect()
+by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet") |> collect()
+by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet") |> collect()
+
 bb <-
   hh |>
   group_by(survey) |> 
@@ -86,8 +89,7 @@ bb <-
             ymin = min(lat, na.rm = TRUE),
             xmax = max(lon, na.rm = TRUE),
             ymax = max(lat, na.rm = TRUE),
-            .groups = "drop") |> 
-  collect()
+            .groups = "drop")
 
 
 ne <- 
@@ -105,7 +107,7 @@ menu <-
   filter(n > 5) |> 
   select(survey, latin) |> 
   distinct() |> 
-  collect() |> 
+  #collect() |> 
   arrange(survey, latin)
 
 by.length <- 
