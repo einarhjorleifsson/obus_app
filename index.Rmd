@@ -1,12 +1,14 @@
 ---
 title: "DATRAS"
-output: flexdashboard::flex_dashboard
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
 runtime: shiny
 ---
 
-<!-- DO NOT FIDDLE WITH STUFF BELOW, JUST PRESS "Run Document" -->
-
-```{r smxapp}
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
 library(sf)
 library(duckdb)
 library(duckdbfs)
@@ -14,7 +16,6 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(Hmisc) # call so posit "knows"
-# source("R/dr_plot.R")
 drp_length <- function(by.length, y = b, S = input$survey, L = input$latin) {
   by.length |>
     filter(survey == S, latin == L) |>
@@ -84,50 +85,42 @@ by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parq
 by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet")
 
 ne <- read_sf("data/ne.gpkg")
+
 # Create the survey list user will choose from
-survey <- hh |> count(survey) |> 
-  collect() |> pull(survey) |> sort()
-survey <- as.list(survey)
-names(survey) <- survey
-# Create the species list users will choose from
-#  Only species that have at least been reported at minimu of 5 years, if survey that long
-latin <- 
-  by.length |> 
+menu <- 
+  by.length |>
+  filter(survey != "-") |> 
   select(survey, year, latin) |> 
   distinct() |> 
   group_by(survey, latin) |> 
-  summarise(distinct_years = n_distinct(year),
+  summarise(n = n_distinct(year),
             .groups = "drop") |> 
-  filter(distinct_years >= 5) |> 
+  filter(n > 5) |> 
+  select(survey, latin) |> 
+  distinct() |> 
   collect() |> 
   arrange(survey, latin)
-# check if any survey has more than "a lot of" species
-# latin |> count(survey) |> arrange(-n)
-latin <-
-  latin |> 
-  filter(survey == "NS-IBTS-1") |> 
-  pull(latin)
 
-
-latin <- as.list(latin)
-names(latin) <- latin
+by.length <- 
+  by.length |>
+  filter(survey != "-")
 ```
 
 Sidebar {.sidebar data-width=175}
 =====================================
 
-```{r, eval = TRUE}
-selectInput(inputId = "survey", label = "Survey:",
-            choices = survey, selected = "NS-IBTS-1")
+```{r}
+# Territory selection
+selectInput(
+  "survey", 
+  "Survey", 
+  choices = menu$survey,
+  selected = 1
+)
 
-selectInput(inputId = "latin", label = "Species:",
-            choices = latin, selected = "Gadus morhua")
-
-radioButtons(inputId = "Type", label = "Unit (not functional yet):", 
-             choices = list("Numbers", "Mass"),
-             selected = list("Mass"))
+# Latin selection (updates reactively)
+uiOutput("latin_ui")
 ```
-
 
 Headlines
 =====================================  
@@ -137,27 +130,22 @@ Column
 
 ### By length
 
-
 ```{r, eval = TRUE}
 renderPlot({
   drp_length(by.length, S = input$survey, L = input$latin)
 })
 ```
 
-
-
 Column 
 -------------------------------------
 
 ### CPUE - bootstrap
-
 
 ```{r, eval = TRUE}
 renderPlot({
   drp_boot(hh, by.station, S = input$survey, L = input$latin)
 })
 ```
-
 
 ### Catch by station - last survey year
 
@@ -166,11 +154,7 @@ renderPlot({
   hh |>
     drp_bubble(by.station, S = input$survey, L = input$latin, ne = ne)
 })
-
 ```
-
-
-
 
 Distributions
 =====================================
@@ -178,72 +162,27 @@ Distributions
 Column {.tabset}
 -------------------------------------
 
-### CPUE
+### Method
 
-```{r, eval = FALSE}
-renderPlot({
-  
-  tmp <- 
-    by.station |> 
-    dplyr::filter(tegund == input$Species) |> 
-    dplyr::collect() |> 
-    dplyr::filter(ar %in% c(seq(2000, 2015, by = 5),
-                            2017:2024))
-  
-  if(input$Type == "Fjöldi") {
-    tmp |> 
-      dplyr::filter(var == "n") |> 
-      dplyr::collect() |> 
-      sm_plot_bubble(island)
-  } else {
-    tmp |> 
-      dplyr::filter(var == "b") |> 
-      dplyr::collect() |> 
-      sm_plot_bubble(island)
-  }
+
+
+
+```{r, context="server"}
+# SERVER LOGIC
+
+# Filtered 
+survey_r <- reactive({
+  req(menu$survey)
+  filter(menu, survey == input$survey)
+})
+
+# Dynamic UI for latin
+output$latin_ui <- renderUI({
+  selectInput(
+    "latin", 
+    "Latin",
+    choices = sort(unique(survey_r()$latin)),
+    selected = 1
+  )
 })
 ```
-
-
-### By ICES rectangle
-
-```{r, eval = FALSE}
-renderPlot({
-  if(input$Type == "Fjöldi") {
-    by.rect |> 
-      dplyr::filter(tegund == input$Species,
-                    var == "n") |> 
-      dplyr::collect() |> 
-      sm_plot_glyph(island)
-  } else {
-    by.rect |> 
-      dplyr::filter(tegund == input$Species,
-                    var == "b") |> 
-      dplyr::collect() |> 
-      sm_plot_glyph(island)
-  }
-})
-```
-
-
-### Probability of capture
-
-```{r, eval = FALSE}
-renderPlot({
-  tmp <- 
-    by.station |> 
-    dplyr::filter(ar == max.ar, tegund == input$Species, var == "n") |> 
-    dplyr::mutate(val = ifelse(val == 0, "absent", "present")) |> 
-    dplyr::select(lon, lat, val)
-  p.capture |> 
-    dplyr::filter(tegund == input$Species) |> 
-    dplyr::collect() |> 
-    sm_plot_probability(island) +
-    ggplot2::geom_point(data = tmp, 
-                        ggplot2::aes(lon, lat, colour = val),
-                        size = 2) +
-    ggplot2::scale_colour_manual(values = c("present" = "cyan", "absent" = "white"),
-                                 guide = "none")
-})
-```
-
