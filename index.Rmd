@@ -6,7 +6,19 @@ output:
 runtime: shiny
 ---
 
+
+```{r, eval = FALSE}
+# Not run
+duckdbfs::open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet") |> 
+  duckdbfs::write_dataset("data/haul.parquet")
+duckdbfs::open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet") |> 
+  duckdbfs::write_dataset("data/by_length.parquet")
+duckdbfs::open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet") |> 
+  duckdbfs::write_dataset("data/by_station.parquet")
+```
+
 ```{r global, include=FALSE}
+LOCAL <- all(file.exists(c("data/haul.parquet", "data/by_length.parquet", "data/by_station.parquet")))
 library(flexdashboard)
 library(shiny)
 library(sf)
@@ -78,9 +90,17 @@ drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin,
     facet_wrap(~ year)
 }
 
-hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet") |> collect()
-by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet") |> collect()
-by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet") |> collect()
+if(LOCAL == TRUE) {
+  print("loading local files")
+  hh <- open_dataset("data/haul.parquet") |> collect()
+  by.length <- open_dataset("data/by_length.parquet") |> collect()
+  by.station <- open_dataset("data/by_station.parquet") |> collect()
+} else {
+  hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet") |> collect()
+  by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet") |> collect()
+  by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet") |> collect()
+}
+
 
 bb <-
   hh |>
@@ -101,15 +121,16 @@ menu <-
   filter(survey != "-") |> 
   select(survey, year, latin) |> 
   distinct() |> 
+  group_by(survey) |> 
+  filter(n_distinct(year) >= 5) |> 
+  ungroup() |> 
   group_by(survey, latin) |> 
-  summarise(n = n_distinct(year),
-            .groups = "drop") |> 
-  filter(n > 5) |> 
+  mutate(n = n()) |> 
+  ungroup() |> 
+  filter(n >= 5) |> 
   select(survey, latin) |> 
   distinct() |> 
-  #collect() |> 
   arrange(survey, latin)
-
 by.length <- 
   by.length |>
   filter(survey != "-")
