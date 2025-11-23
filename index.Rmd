@@ -1,0 +1,249 @@
+---
+title: "DATRAS"
+output: flexdashboard::flex_dashboard
+runtime: shiny
+---
+
+<!-- DO NOT FIDDLE WITH STUFF BELOW, JUST PRESS "Run Document" -->
+
+```{r smxapp}
+library(sf)
+library(duckdb)
+library(duckdbfs)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(Hmisc) # call so posit "knows"
+# source("R/dr_plot.R")
+drp_length <- function(by.length, y = b, S = input$survey, L = input$latin) {
+  by.length |>
+    filter(survey == S, latin == L) |>
+    ggplot(aes(length, {{ y }})) +
+    theme_bw(base_size = 10) +
+    geom_col(fill = "grey25", colour = "grey25") +
+    facet_wrap(~ year) +
+    labs(x = "Lengd [cm]", y = "Total survey catch [kg/cm]")
+}
+drp_boot <- function(hh, by.station, y = b, S = input$survey, L = input$latin) {
+  hh |>
+    select(.id, survey, year) |>
+    filter(survey %in% S) |>
+    left_join(by.station |> filter(latin == L),
+              by = join_by(.id)) |>
+    collect() |>
+    mutate(n = replace_na(n, 0),
+           b = replace_na(b, 0)) |>
+    ggplot(aes(year, {{ y }})) +
+    theme_bw(base_size = 12) +
+    stat_summary(fun.data = "mean_cl_boot") +
+    expand_limits(y = 0) +
+    labs(x = NULL, y = "CPUE [kg/tow]")
+}
+
+drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin, ne = ne) {
+
+  hh2 <-
+    hh |>
+    filter(survey %in% S)
+  
+  bb <-
+    hh2 |>
+    summarise(xmin = min(lon, na.rm = TRUE),
+              ymin = min(lat, na.rm = TRUE),
+              xmax = max(lon, na.rm = TRUE),
+              ymax = max(lat, na.rm = TRUE)) |> 
+    collect()
+  
+  maxyear <- hh2 |> collect() |> pull(year) |> max(na.rm = TRUE)
+  
+  hh2 <-
+    hh2 |>
+    filter(year == maxyear) |>
+    left_join(by.station |> filter(latin == L),
+              by = join_by(.id)) |>
+    collect() |>
+    mutate(zero = ifelse(is.na(n), "yes", "no"),
+           n = replace_na(n, 0),
+           b = replace_na(b, 0))
+  
+  
+  ggplot() +
+    theme_void() +
+    geom_sf(data = ne) +
+    geom_point(data = hh2,
+               aes(lon, lat, size = {{ y }}, colour = zero),
+               alpha = 0.75) +
+    scale_size_area(max_size = 10) +
+    labs(x = NULL, y = NULL, size = "Kg/tow") +
+    coord_sf(xlim = c(bb$xmin, bb$xmax), ylim = c(bb$ymin, bb$ymax)) +
+    facet_wrap(~ year)
+}
+
+hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet")
+by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet")
+by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet")
+
+ne <- read_sf("data/ne.gpkg")
+# Create the survey list user will choose from
+survey <- hh |> count(survey) |> 
+  collect() |> pull(survey) |> sort()
+survey <- as.list(survey)
+names(survey) <- survey
+# Create the species list users will choose from
+#  Only species that have at least been reported at minimu of 5 years, if survey that long
+latin <- 
+  by.length |> 
+  select(survey, year, latin) |> 
+  distinct() |> 
+  group_by(survey, latin) |> 
+  summarise(distinct_years = n_distinct(year),
+            .groups = "drop") |> 
+  filter(distinct_years >= 5) |> 
+  collect() |> 
+  arrange(survey, latin)
+# check if any survey has more than "a lot of" species
+# latin |> count(survey) |> arrange(-n)
+latin <-
+  latin |> 
+  filter(survey == "NS-IBTS-1") |> 
+  pull(latin)
+
+
+latin <- as.list(latin)
+names(latin) <- latin
+```
+
+Sidebar {.sidebar data-width=175}
+=====================================
+
+```{r, eval = TRUE}
+selectInput(inputId = "survey", label = "Survey:",
+            choices = survey, selected = "NS-IBTS-1")
+
+selectInput(inputId = "latin", label = "Species:",
+            choices = latin, selected = "Gadus morhua")
+
+radioButtons(inputId = "Type", label = "Unit (not functional yet):", 
+             choices = list("Numbers", "Mass"),
+             selected = list("Mass"))
+```
+
+
+Headlines
+=====================================  
+
+Column 
+-------------------------------------
+
+### By length
+
+
+```{r, eval = TRUE}
+renderPlot({
+  drp_length(by.length, S = input$survey, L = input$latin)
+})
+```
+
+
+
+Column 
+-------------------------------------
+
+### CPUE - bootstrap
+
+
+```{r, eval = TRUE}
+renderPlot({
+  drp_boot(hh, by.station, S = input$survey, L = input$latin)
+})
+```
+
+
+### Catch by station - last survey year
+
+```{r, eval = TRUE}
+renderPlot({
+  hh |>
+    drp_bubble(by.station, S = input$survey, L = input$latin, ne = ne)
+})
+
+```
+
+
+
+
+Distributions
+=====================================
+
+Column {.tabset}
+-------------------------------------
+
+### CPUE
+
+```{r, eval = FALSE}
+renderPlot({
+  
+  tmp <- 
+    by.station |> 
+    dplyr::filter(tegund == input$Species) |> 
+    dplyr::collect() |> 
+    dplyr::filter(ar %in% c(seq(2000, 2015, by = 5),
+                            2017:2024))
+  
+  if(input$Type == "Fjöldi") {
+    tmp |> 
+      dplyr::filter(var == "n") |> 
+      dplyr::collect() |> 
+      sm_plot_bubble(island)
+  } else {
+    tmp |> 
+      dplyr::filter(var == "b") |> 
+      dplyr::collect() |> 
+      sm_plot_bubble(island)
+  }
+})
+```
+
+
+### By ICES rectangle
+
+```{r, eval = FALSE}
+renderPlot({
+  if(input$Type == "Fjöldi") {
+    by.rect |> 
+      dplyr::filter(tegund == input$Species,
+                    var == "n") |> 
+      dplyr::collect() |> 
+      sm_plot_glyph(island)
+  } else {
+    by.rect |> 
+      dplyr::filter(tegund == input$Species,
+                    var == "b") |> 
+      dplyr::collect() |> 
+      sm_plot_glyph(island)
+  }
+})
+```
+
+
+### Probability of capture
+
+```{r, eval = FALSE}
+renderPlot({
+  tmp <- 
+    by.station |> 
+    dplyr::filter(ar == max.ar, tegund == input$Species, var == "n") |> 
+    dplyr::mutate(val = ifelse(val == 0, "absent", "present")) |> 
+    dplyr::select(lon, lat, val)
+  p.capture |> 
+    dplyr::filter(tegund == input$Species) |> 
+    dplyr::collect() |> 
+    sm_plot_probability(island) +
+    ggplot2::geom_point(data = tmp, 
+                        ggplot2::aes(lon, lat, colour = val),
+                        size = 2) +
+    ggplot2::scale_colour_manual(values = c("present" = "cyan", "absent" = "white"),
+                                 guide = "none")
+})
+```
+
