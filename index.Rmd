@@ -84,7 +84,8 @@ hh <- open_dataset("https://heima.hafro.is/~einarhj/datras/haul.parquet")
 by.length <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_length.parquet")
 by.station <- open_dataset("https://heima.hafro.is/~einarhj/datras/by_station.parquet")
 
-ne <- read_sf("data/ne.gpkg")
+ne <- 
+  read_sf("https://raw.githubusercontent.com/einarhjorleifsson/obus_app/refs/heads/master/data/ne.gpkg")
 
 # Create the survey list user will choose from
 menu <- 
