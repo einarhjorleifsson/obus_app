@@ -7,6 +7,7 @@ runtime: shiny
 ---
 
 
+
 ```{r, eval = FALSE}
 # Not run
 duckdbfs::open_dataset("https://heima.hafro.is/~einarhj/datras_latin/haul.parquet") |> 
@@ -28,32 +29,58 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(Hmisc) # call so posit "knows"
-drp_length <- function(by.length, y = b, S = input$survey, L = input$latin) {
-  by.length |>
-    filter(survey == S, latin == L) |>
-    ggplot(aes(length, {{ y }})) +
+drp_length <- function(by.length, W = input$what, S = input$survey, L = input$latin) {
+  
+  # y_value <- enquo(y)
+  ylabel <- ifelse(W == "Numbers" , "Total survey catch [numbers/cm]", "Total survey catch [kg/cm]")
+  
+  d <- 
+    by.length |> 
+    filter(survey == S, latin == L)
+  
+    if(W == "Numbers") {
+      d <- d |> rename(y = n)
+    } else {
+      d <- d |> rename(y = b) 
+    }
+  d |> 
+    ggplot(aes(length, y)) +
     theme_bw(base_size = 10) +
     geom_col(fill = "grey25", colour = "grey25") +
     facet_wrap(~ year) +
-    labs(x = "Lengd [cm]", y = "Total survey catch [kg/cm]")
+    labs(x = "Lengd [cm]", y = ylabel)
 }
-drp_boot <- function(hh, by.station, y = b, S = input$survey, L = input$latin) {
-  hh |>
+drp_boot <- function(hh, by.station, S = input$survey, L = input$latin, W = input$what) {
+  
+  
+  ylabel <- ifelse(W == "Numbers" , "CPUE [numbers/tow]", "CPUE [kg/tow]")
+
+  d <- 
+    hh |>
     select(.id, survey, year) |>
     filter(survey %in% S) |>
     left_join(by.station |> filter(latin == L),
-              by = join_by(.id)) |>
-    # collect() |>
-    mutate(n = replace_na(n, 0),
-           b = replace_na(b, 0)) |>
-    ggplot(aes(year, {{ y }})) +
+              by = join_by(.id))
+  
+  if(W == "Numbers") {
+      d <- d |> rename(y = n)
+    } else {
+      d <- d |> rename(y = b) 
+    }
+  
+  d |> 
+    mutate(y = replace_na(y, 0)) |> 
+    ggplot(aes(year, y)) +
     theme_bw(base_size = 12) +
     stat_summary(fun.data = "mean_cl_boot") +
     expand_limits(y = 0) +
-    labs(x = NULL, y = "CPUE [kg/tow]")
+    labs(x = NULL, y = ylabel)
 }
 
-drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin, ne = ne, bb) {
+drp_bubble <- function(hh, by.station, W = inpute$what, S = input$survey, L = input$latin, ne = ne, bb) {
+  
+  
+  ylabel <- ifelse(W == "Numbers" , "CPUE [numbers/tow]", "CPUE [kg/tow]")
   
   hh2 <-
     hh |>
@@ -63,29 +90,36 @@ drp_bubble <- function(hh, by.station, y = b, S = input$survey, L = input$latin,
     bb |> 
     filter(survey == S)
 
-  maxyear <- hh2 |> 
+  #maxyear <- hh2 |> 
     #collect() |> 
-    pull(year) |> max(na.rm = TRUE)
+    #pull(year) |> max(na.rm = TRUE)
   
-  hh2 <-
+  d <-
     hh2 |>
-    filter(year == maxyear) |>
+    #filter(year == maxyear) |>
     left_join(by.station |> filter(latin == L),
-              by = join_by(.id)) |>
-    #collect() |>
-    mutate(zero = ifelse(is.na(n), "yes", "no"),
-           n = replace_na(n, 0),
-           b = replace_na(b, 0))
+              by = join_by(.id))
+  
+  if(W == "Numbers") {
+      d <- d |> rename(y = n)
+    } else {
+      d <- d |> rename(y = b) 
+    }
+  
+  d <- 
+    d |> 
+    mutate(zero = ifelse(is.na(y), "yes", "no"),
+           y = replace_na(y, 0))
   
   
   ggplot() +
     theme_void() +
     geom_sf(data = ne) +
-    geom_point(data = hh2,
-               aes(lon, lat, size = {{ y }}, colour = zero),
+    geom_point(data = d,
+               aes(lon, lat, size = y, colour = zero),
                alpha = 0.75) +
     scale_size_area(max_size = 10) +
-    labs(x = NULL, y = NULL, size = "Kg/tow") +
+    labs(x = NULL, y = NULL, size = ylabel) +
     coord_sf(xlim = c(bb$xmin, bb$xmax), ylim = c(bb$ymin, bb$ymax)) +
     facet_wrap(~ year)
 }
@@ -140,16 +174,19 @@ Sidebar {.sidebar data-width=175}
 =====================================
 
 ```{r}
-# Territory selection
+# Survey selection
 selectInput(
   "survey", 
   "Survey", 
   choices = menu$survey,
   selected = 1
 )
-
 # Latin selection (updates reactively)
 uiOutput("latin_ui")
+# abundance or biomass
+radioButtons(inputId = "what", label = "What:", 
+             choices = list("Numbers", "Weight"),
+             selected = list("Numbers"))
 ```
 
 Headlines
@@ -162,7 +199,8 @@ Column
 
 ```{r, eval = TRUE}
 renderPlot({
-  drp_length(by.length, S = input$survey, L = input$latin)
+  req(input$latin, input$survey)
+  drp_length(by.length, S = input$survey, L = input$latin, W = input$what)
 })
 ```
 
@@ -173,7 +211,8 @@ Column
 
 ```{r, eval = TRUE}
 renderPlot({
-  drp_boot(hh, by.station, S = input$survey, L = input$latin)
+  req(input$latin, input$survey)
+  drp_boot(hh, by.station, S = input$survey, L = input$latin, W = input$what)
 })
 ```
 
@@ -181,8 +220,12 @@ renderPlot({
 
 ```{r, eval = TRUE}
 renderPlot({
+  req(input$latin, input$survey)
   hh |>
-    drp_bubble(by.station, S = input$survey, L = input$latin, ne = ne, bb = bb)
+    group_by(survey) |> 
+    filter(year == max(year)) |> 
+    ungroup() |> 
+    drp_bubble(by.station, S = input$survey, L = input$latin, W = input$what, ne = ne, bb = bb)
 })
 ```
 
